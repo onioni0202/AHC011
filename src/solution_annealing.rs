@@ -11,7 +11,7 @@ struct Board {
     board_list: Vec<u8>,
     empty_block_area: (usize, usize),
     from_position: Option<(usize, usize)>,
-    from_dchar: Option<char>
+    from_dchar: Option<char>,
 }
 
 #[allow(dead_code)]
@@ -33,7 +33,7 @@ impl Board {
             board_list: board_list,
             empty_block_area: empty_block_area,
             from_position: None,
-            from_dchar: None
+            from_dchar: None,
         }
     }
 
@@ -69,7 +69,8 @@ impl Board {
     }
 
     fn swap(&mut self, (h1, w1): (usize, usize), (h2, w2): (usize, usize)) {
-        self.board_list.swap(h1 * self.board_size + w1, h2 * self.board_size + w2);
+        self.board_list
+            .swap(h1 * self.board_size + w1, h2 * self.board_size + w2);
     }
 
     fn replace(&mut self, h: usize, w: usize, value: u8) {
@@ -111,49 +112,110 @@ fn input() -> (usize, Board) {
 
 fn main() {
     let (max_iter, init_board) = input();
-    let score = calc_score(&init_board);
-    let best_board = annealing(&init_board, 1.0);
-    best_board.print_board();
+    let init_movement = vec![];
+    let best_solution = annealing(max_iter, &init_board, init_movement, 2.98);
+    println!("{}", best_solution.iter().collect::<String>())
 }
 
-fn annealing(init_board: &Board, duration: f32) -> Board {
-    const START_TEMP: f32 = 200.0;
+fn annealing(max_iter: usize, board: &Board, movement: Vec<char>, duration: f32) -> Vec<char> {
+    const START_TEMP: f32 = 2000.0;
     const END_TEMP: f32 = 5.0;
     let start_time = std::time::Instant::now();
-    let board_size = init_board.board_size;
-    let mut board = init_board.clone();
+    let mut solution = movement.clone();
     let mut score = calc_score(&board);
-    let mut best_board = board.clone();
+    let mut best_solution = movement.clone();
     let mut best_score = score;
     let mut rng = rand_pcg::Pcg64Mcg::new(SEED);
     let mut iter_num = 0;
-    loop {
+    'mainloop: loop {
         iter_num += 1;
         let diff_time = (std::time::Instant::now() - start_time).as_secs_f32();
         if diff_time > duration {
             break;
         }
         let mut new_board = board.clone();
-        let choice1 = (rng.gen_range(0, board_size), rng.gen_range(0, board_size));
-        let choice2 = (rng.gen_range(0, board_size), rng.gen_range(0, board_size));
-        if choice1 == choice2 {
-            continue;
+        let mut new_solution = solution.clone();
+        let selection: usize = rng.gen_range(0, 5);
+        match selection {
+            0 => {
+                if new_solution.len() < max_iter / 2 {
+                    continue;
+                }
+                let select1 = rng.gen_range(0, new_solution.len());
+                let select2 = rng.gen_range(0, new_solution.len());
+                new_solution.swap(select1, select2);
+            }
+            1 => {
+                if new_solution.len() == 0 {
+                    continue;
+                }
+                let select = rng.gen_range(0, new_solution.len());
+                let random_dchar = Board::DCHARS[rng.gen_range(0, 4)];
+                new_solution[select] = random_dchar;
+            }
+            2 => {
+                if new_solution.len() < max_iter / 2 {
+                    continue;
+                }
+                let select = rng.gen_range(0, new_solution.len());
+                new_solution.remove(select);
+            }
+            3 => {
+                if new_solution.len() == 0 || new_solution.len() == max_iter {
+                    continue;
+                }
+                let select = rng.gen_range(0, new_solution.len());
+                let random_dchar = Board::DCHARS[rng.gen_range(0, 4)];
+                new_solution.insert(select, random_dchar);
+            }
+            4 => {
+                if new_solution.len() == max_iter {
+                    continue;
+                }
+                let random_dchar = Board::DCHARS[rng.gen_range(0, 4)];
+                new_solution.push(random_dchar);
+            }
+            _ => unreachable!(),
         }
-        new_board.swap(choice1, choice2);
+        for &dchar in &new_solution {
+            match dchar {
+                'L' => {
+                    if !new_board.move_left() {
+                        continue 'mainloop;
+                    };
+                }
+                'U' => {
+                    if !new_board.move_up() {
+                        continue 'mainloop;
+                    };
+                }
+                'D' => {
+                    if !new_board.move_down() {
+                        continue 'mainloop;
+                    };
+                }
+                'R' => {
+                    if !new_board.move_right() {
+                        continue 'mainloop;
+                    };
+                }
+                _ => unreachable!(),
+            }
+        }
         let new_score = calc_score(&new_board);
         let temp = START_TEMP + (END_TEMP - START_TEMP) * diff_time / duration;
         if f32::exp((new_score - score) / temp) > rng.gen() {
             score = new_score;
-            board = new_board.clone();
+            solution = new_solution.clone();
         }
         if new_score > best_score {
             best_score = new_score;
-            best_board = new_board;
+            best_solution = solution.clone();
         }
     }
     eprintln!("BEST SCORE = {}", best_score);
     eprintln!("ITER = {}", iter_num);
-    best_board
+    best_solution
 }
 
 fn calc_score(board: &Board) -> f32 {
@@ -193,4 +255,3 @@ fn calc_score(board: &Board) -> f32 {
     }
     5e5 * max_tree_size as f32 / (board_size * board_size - 1) as f32
 }
-

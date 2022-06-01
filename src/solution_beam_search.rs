@@ -1,15 +1,16 @@
 use proconio::input;
 use proconio::marker::Chars;
 use rand::prelude::*;
-use std::collections::VecDeque;
+use std::collections::{BinaryHeap, HashMap, VecDeque};
 
 const SEED: u128 = 0;
+const BEAM_WIDTH: [usize; 11] = [0, 0, 0, 0, 0, 0, 3400, 1700, 950, 690, 450];
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 struct Board {
     board_size: usize,
     board_list: Vec<u8>,
-    empty_block_area: (usize, usize)
+    empty_block_area: (usize, usize),
 }
 
 #[allow(dead_code)]
@@ -29,7 +30,7 @@ impl Board {
         Board {
             board_size: board_size,
             board_list: board_list,
-            empty_block_area: empty_block_area
+            empty_block_area: empty_block_area,
         }
     }
 
@@ -86,6 +87,31 @@ impl Board {
     }
 }
 
+struct Node {
+    board: Board,
+    score: i32
+}
+
+impl PartialEq for Node {
+    fn eq(&self, other: &Self) -> bool {
+        self.score == other.score
+    }
+}
+
+impl Eq for Node {}
+
+impl PartialOrd for Node {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(&other))
+    }
+}
+
+impl Ord for Node {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.score.cmp(&other.score)
+    }
+}
+
 fn input() -> (usize, Board) {
     input! {
         board_size: usize,
@@ -106,114 +132,120 @@ fn input() -> (usize, Board) {
 
 fn main() {
     let (max_iter, init_board) = input();
-    let init_movement = vec![];
-    let best_solution = annealing(max_iter, &init_board, init_movement, 2.98);
+    let best_solution = beam_search(max_iter, init_board, 2.98);
     println!("{}", best_solution.iter().collect::<String>());
 }
 
-fn annealing(max_iter: usize, board: &Board, movement: Vec<char>, duration: f32) -> Vec<char> {
-    const START_TEMP: f32 = 2000.0;
-    const END_TEMP: f32 = 5.0;
+fn beam_search(max_iter: usize, init_board: Board, duration: f32) -> Vec<char> {
+    let beam_width = BEAM_WIDTH[init_board.board_size];
     let start_time = std::time::Instant::now();
-    let mut solution = movement.clone();
-    let mut score = calc_score(&board);
-    let mut best_solution = movement.clone();
-    let mut best_score = score;
-    let mut rng = rand_pcg::Pcg64Mcg::new(SEED);
-    let mut iter_num = 0;
-    'mainloop: loop {
-        iter_num += 1;
-        let diff_time = (std::time::Instant::now() - start_time).as_secs_f32();
-        if diff_time > duration {
+    let mut rng = rand_pcg::Mcg128Xsl64::new(SEED);
+    let mut best_score = calc_score(&init_board);
+    let mut best_board = init_board.clone();
+    let mut record = HashMap::new();
+    let mut que = vec![];
+    que.push(Node {
+        board: init_board.clone(),
+        score: calc_score(&init_board)
+    });
+    record.insert(init_board, 'S');
+    'mainloop: for _ in 0..max_iter {
+        let mut next_que = vec![];
+        while let Some(mut node) = que.pop() {
+            let diff_time = (std::time::Instant::now() - start_time).as_secs_f32();
+            if diff_time > duration {
+                break 'mainloop
+            }
+            if node.score > best_score {
+                best_score = node.score;
+                best_board = node.board.clone();
+            }
+            // up
+            if node.board.move_up() {
+                if !record.contains_key(&node.board) {
+                    record.insert(node.board.clone(), 'U');
+                    next_que.push(Node {
+                        board: node.board.clone(),
+                        score: calc_score(&node.board) + rng.gen_range(0, 1000)
+                    });
+                }
+                node.board.move_down();
+            }
+            // down
+            if node.board.move_down() {
+                if !record.contains_key(&node.board) {
+                    record.insert(node.board.clone(), 'D');
+                    next_que.push(Node {
+                        board: node.board.clone(),
+                        score: calc_score(&node.board) + rng.gen_range(0, 1000)
+                    });
+                }
+                node.board.move_up();
+            }
+            // left
+            if node.board.move_left() {
+                if !record.contains_key(&node.board) {
+                    record.insert(node.board.clone(), 'L');
+                    next_que.push(Node {
+                        board: node.board.clone(),
+                        score: calc_score(&node.board) + rng.gen_range(0, 1000)
+                    });
+                }
+                node.board.move_right();
+            }
+            // right
+            if node.board.move_right() {
+                if !record.contains_key(&node.board) {
+                    record.insert(node.board.clone(), 'R');
+                    next_que.push(Node {
+                        board: node.board.clone(),
+                        score: calc_score(&node.board) + rng.gen_range(0, 1000)
+                    });
+                }
+                node.board.move_left();
+            }
+        }
+        next_que.sort();
+        for _ in 0..beam_width {
+            if let Some(v) = next_que.pop() {
+                que.push(v);
+            }
+        }
+    }
+    let mut best_solution = vec![];
+    while let Some(&dchar) = record.get(&best_board) {
+        if dchar == 'S' {
             break;
         }
-        let mut new_board = board.clone();
-        let mut new_solution = solution.clone();
-        let selection: usize = rng.gen_range(0, 5);
-        match selection {
-            0 => {
-                if new_solution.len() < max_iter / 2 {
-                    continue;
-                }
-                let select1 = rng.gen_range(0, new_solution.len());
-                let select2 = rng.gen_range(0, new_solution.len());
-                new_solution.swap(select1, select2);
+        best_solution.push(dchar);
+        match dchar {
+            'U' => {
+                best_board.move_down();
             }
-            1 => {
-                if new_solution.len() == 0 {
-                    continue;
-                }
-                let select = rng.gen_range(0, new_solution.len());
-                let random_dchar = Board::DCHARS[rng.gen_range(0, 4)];
-                new_solution[select] = random_dchar;
+            'D' => {
+                best_board.move_up();
             }
-            2 => {
-                if new_solution.len() < max_iter / 2 {
-                    continue;
-                }
-                let select = rng.gen_range(0, new_solution.len());
-                new_solution.remove(select);
+            'L' => {
+                best_board.move_right();
             }
-            3 => {
-                if new_solution.len() == 0 || new_solution.len() == max_iter {
-                    continue;
-                }
-                let select = rng.gen_range(0, new_solution.len());
-                let random_dchar = Board::DCHARS[rng.gen_range(0, 4)];
-                new_solution.insert(select, random_dchar);
+            'R' => {
+                best_board.move_left();
             }
-            4 => {
-                if new_solution.len() == max_iter {
-                    continue;
-                }
-                let random_dchar = Board::DCHARS[rng.gen_range(0, 4)];
-                new_solution.push(random_dchar);
+            'S' => {
+                break;
             }
             _ => unreachable!(),
         }
-        for &dchar in &new_solution {
-            match dchar {
-                'L' => {
-                    if !new_board.move_left() {
-                        continue 'mainloop;
-                    };
-                }
-                'U' => {
-                    if !new_board.move_up() {
-                        continue 'mainloop;
-                    };
-                }
-                'D' => {
-                    if !new_board.move_down() {
-                        continue 'mainloop;
-                    };
-                }
-                'R' => {
-                    if !new_board.move_right() {
-                        continue 'mainloop;
-                    };
-                }
-                _ => unreachable!(),
-            }
-        }
-        let new_score = calc_score(&new_board);
-        let temp = START_TEMP + (END_TEMP - START_TEMP) * diff_time / duration;
-        if f32::exp((new_score - score) / temp) > rng.gen() {
-            score = new_score;
-            solution = new_solution.clone();
-        }
-        if new_score > best_score {
-            best_score = new_score;
-            best_solution = solution.clone();
-        }
     }
-    eprintln!("BEST SCORE = {}", best_score);
-    eprintln!("ITER = {}", iter_num);
+    eprintln!("score = {}", best_score);
+    best_solution.reverse();
     best_solution
 }
 
-fn calc_score(board: &Board) -> f32 {
+fn calc_score(board: &Board) -> i32 {
+    let mut rng = rand_pcg::Pcg64Mcg::new(SEED);
     let board_size = board.board_size;
+    let mut score = 0;
     let mut seen = vec![vec![false; board_size]; board_size];
     let mut que = VecDeque::new();
     let mut max_tree_size = 0;
@@ -232,6 +264,7 @@ fn calc_score(board: &Board) -> f32 {
                                 w_now.wrapping_add(Board::DW[didx]),
                             );
                             if h_to >= board_size || w_to >= board_size {
+                                score -= 1000;
                                 continue;
                             }
                             if ((board.get(h_to, w_to) >> ((didx + 2) % 4)) & 1) == 1
@@ -247,5 +280,8 @@ fn calc_score(board: &Board) -> f32 {
             }
         }
     }
-    5e5 * max_tree_size as f32 / (board_size * board_size - 1) as f32
+    score += (5e5 * max_tree_size as f32 / (board_size * board_size - 1) as f32).round() as i32;
+    score + rng.gen_range(0, 1000)
 }
+
+
